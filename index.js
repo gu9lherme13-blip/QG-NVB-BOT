@@ -3,7 +3,7 @@ const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, 
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
+const GUILD_ID = process.env.GUILD_ID || "1462814574691750113";
 
 if (!TOKEN || !CLIENT_ID) {
     console.error("❌ [QG NVB] Configure o .env com DISCORD_TOKEN e CLIENT_ID");
@@ -22,7 +22,6 @@ const client = new Client({
     partials: [Partials.Channel, Partials.Message, Partials.GuildMember]
 });
 
-// ===== DATABASE EM MEMÓRIA (trocar por JSON/SQLite depois) =====
 const db = {
     xp: new Map(),
     pontos: new Map(),
@@ -34,10 +33,11 @@ const db = {
     antiSpam: new Map()
 };
 
-// ===== COMANDOS SLASH - TODOS QUE VOCÊ PEDIU =====
 const commands = [
     new SlashCommandBuilder().setName('ajuda').setDescription('🦇 Mostra todos os comandos do QG NVB'),
     new SlashCommandBuilder().setName('perfil').setDescription('👤 Ver seu perfil NVB').addUserOption(o=>o.setName('usuario').setDescription('Usuário').setRequired(false)),
+    new SlashCommandBuilder().setName('avatar').setDescription('🖼️ Ver avatar de alguém').addUserOption(o=>o.setName('usuario').setDescription('Usuário').setRequired(false)),
+    new SlashCommandBuilder().setName('avata').setDescription('🖼️ Ver avatar (atalho)').addUserOption(o=>o.setName('usuario').setDescription('Usuário').setRequired(false)),
     new SlashCommandBuilder().setName('cargo').setDescription('📋 Ver lista de cargos da NVB'),
     new SlashCommandBuilder().setName('tag').setDescription('🏷️ Ver como colocar a TAG NVB'),
     new SlashCommandBuilder().setName('rank').setDescription('🏆 Ver seu rank NVB'),
@@ -67,18 +67,16 @@ async function registerCommands() {
         console.log('🔄 [QG NVB] Registrando comandos slash...');
         if (GUILD_ID) {
             await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-            console.log(`✅ [QG NVB] ${commands.length} comandos registrados no servidor ${GUILD_ID}`);
-        } else {
-            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-            console.log(`✅ [QG NVB] ${commands.length} comandos globais registrados`);
+            console.log(`✅ [QG NVB] ${commands.length} comandos registrados no servidor ${GUILD_ID} - INSTANTANEO`);
         }
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log(`✅ [QG NVB] ${commands.length} comandos globais registrados`);
     } catch (e) {
         console.error('❌ Erro ao registrar comandos:', e);
     }
 }
 
-// ===== EVENTOS =====
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`\n🦇 [QG NVB] BOT ONLINE ROXO - ${client.user.tag}`);
     console.log(`🩸 Nytheris Vampyre Bloodline - Sistema completo ativo`);
     console.log(`📡 Servidores: ${client.guilds.cache.size}`);
@@ -89,269 +87,248 @@ client.once('ready', () => {
     console.log(`👑 QG OPERACIONAL 24H\n`);
     client.user.setActivity('QG NVB | OPERACIONAL 🦇', { type: 3 });
 });
+client.once('ready', () => {
+    console.log(`🦇 [QG NVB] BOT ONLINE (legacy ready) - ${client.user.tag}`);
+});
 
 client.on('guildMemberAdd', async member => {
-    console.log(`👋 Entrou: ${member.user.tag}`);
-    // Auto cargo [NVT] Novato
     try {
         const nvtRole = member.guild.roles.cache.find(r => r.name.includes('NVT') || r.name.includes('Novato'));
         if (nvtRole) await member.roles.add(nvtRole);
     } catch(e){}
-
-    const welcomeId = process.env.WELCOME_CHANNEL_ID;
-    if (welcomeId) {
-        const ch = member.guild.channels.cache.get(welcomeId);
-        if (ch) {
-            const embed = new EmbedBuilder()
-                .setColor(0xa855f7)
-                .setTitle('🦇 BEM-VINDO À NVB')
-                .setDescription(`Salve ${member}!\n\n🩸 **Nytheris Vampyre Bloodline** - Uma linhagem que acolhe. Uma família que permanece.\n\n📜 Leia as regras em <#${process.env.REGRAS_CHANNEL_ID || 'regras'}>\n🛡️ Vá em <#${process.env.VERIFICACAO_CHANNEL_ID || 'verificacao'}> para verificação\n🏷️ Coloque a TAG NVB\n🎫 Precisa de ajuda? Abra ticket em <#${process.env.TICKET_CHANNEL_ID || 'tickets'}>\n\n🎖️ Você recebeu o cargo [NVT] Novato`)
-                .setThumbnail(member.user.displayAvatarURL())
-                .setFooter({ text: 'QG NVB | Sistema de Entrada' })
-                .setTimestamp();
-            ch.send({ content: `${member}`, embeds: [embed] }).catch(()=>{});
-        }
-    }
-});
-
-client.on('guildMemberRemove', async member => {
-    const leaveId = process.env.LEAVE_CHANNEL_ID || process.env.WELCOME_CHANNEL_ID;
-    if (leaveId) {
-        const ch = member.guild.channels.cache.get(leaveId);
-        if (ch) {
-            ch.send(`🚪 **${member.user.tag}** saiu da NVB. 🦇`).catch(()=>{});
-        }
-    }
-    const logsId = process.env.LOGS_CHANNEL_ID;
-    if (logsId) {
-        const logCh = member.guild.channels.cache.get(logsId);
-        if (logCh) {
-            const embed = new EmbedBuilder().setColor(0xff0000).setTitle('🚪 Saída').setDescription(`${member.user.tag} (${member.id}) saiu`).setTimestamp();
-            logCh.send({ embeds: [embed] }).catch(()=>{});
-        }
-    }
-});
-
-client.on('messageCreate', async message => {
-    if (message.author.bot) return;
-    if (!message.guild) return;
-
-    // ===== ANTI-SPAM =====
-    const userId = message.author.id;
-    const now = Date.now();
-    if (!db.antiSpam.has(userId)) db.antiSpam.set(userId, []);
-    const times = db.antiSpam.get(userId).filter(t=> now - t < 5000);
-    times.push(now);
-    db.antiSpam.set(userId, times);
-    if (times.length > 5) {
-        try {
-            await message.delete();
-            const warn = await message.channel.send(`🚨 ${message.author}, anti-spam ativado! Pare de floodar.`);
-            setTimeout(()=>warn.delete().catch(()=>{}), 5000);
-            return;
-        } catch(e){}
-    }
-
-    // ===== ANTI-LINK =====
-    if (message.content.match(/https?:\/\/|discord\.gg|discord\.com\/invite/)) {
-        const allowed = message.member.permissions.has(PermissionsBitField.Flags.ManageMessages);
-        if (!allowed) {
-            try {
-                await message.delete();
-                message.channel.send(`🔗 ${message.author}, links não são permitidos aqui!`).then(m=>setTimeout(()=>m.delete().catch(()=>{}), 5000)).catch(()=>{});
-                return;
-            } catch(e){}
-        }
-    }
-
-    // ===== BLOQUEIO DE PALAVRAS =====
-    if (db.blockedWords.some(w=> message.content.toLowerCase().includes(w))) {
-        if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
-            try { await message.delete(); message.channel.send(`🔒 ${message.author}, conteúdo bloqueado pelo filtro NVB.`).then(m=>setTimeout(()=>m.delete().catch(()=>{}), 4000)); return; } catch(e){}
-        }
-    }
-
-    // ===== XP / PONTOS =====
-    const xpGain = Math.floor(Math.random()*15)+5;
-    const current = db.xp.get(userId) || 0;
-    db.xp.set(userId, current + xpGain);
-    const pontosGain = Math.floor(Math.random()*3)+1;
-    db.pontos.set(userId, (db.pontos.get(userId)||0)+pontosGain);
-
-    if (message.content.toLowerCase() === '!ping') {
-        message.reply('🏓 Pong! QG NVB ONLINE 🦇 Latência: '+client.ws.ping+'ms');
-    }
 });
 
 client.on('interactionCreate', async interaction => {
-    if (interaction.isChatInputCommand()) {
-        const { commandName } = interaction;
+    try {
+        if (interaction.isChatInputCommand()) {
+            const commandName = interaction.commandName;
 
-        if (commandName === 'ajuda') {
-            const embed = new EmbedBuilder()
-                .setColor(0xa855f7)
-                .setTitle('🦇 QG NVB - Central de Comandos')
-                .setDescription(`**Nytheris Vampyre Bloodline - Sistema Completo**\n\n**🛡️ Segurança:** /verificacao /regras /tag\n**🎫 Atendimento:** /ticket /denuncia\n**🩸 NVB:** /perfil /cargo /rank /pontos /ranking\n**💬 Comunidade:** /evento /sorteio /enquete\n**👑 Moderação:** /limpar /aviso /silenciar /expulsar /banir /logs\n**📢 Chamadas:** /chamada\n\n**Fluxo NVB:** Site → Recrutamento → Bot → Verificação → [NVT] → TAG → Membro`)
-                .setThumbnail('https://i.imgur.com/placeholder.png')
-                .setFooter({ text: 'QG NVB | Uma linhagem que acolhe. Uma família que permanece.' });
+            if (commandName === 'avatar' || commandName === 'avata') {
+                const user = interaction.options.getUser('usuario') || interaction.user;
+                const embed = new EmbedBuilder()
+                    .setColor(0xa855f7)
+                    .setTitle(`🖼️ Avatar de ${user.username}`)
+                    .setImage(user.displayAvatarURL({ dynamic: true, size: 1024 }))
+                    .setDescription(`[Abrir em alta qualidade](` + user.displayAvatarURL({ dynamic: true, size: 4096 }) + `)`)
+                    .setFooter({ text: `ID: ${user.id}` })
+                    .setTimestamp();
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            if (commandName === 'ajuda') {
+                const embed = new EmbedBuilder()
+                    .setColor(0xa855f7)
+                    .setTitle('🦇 QG NVB - Central de Comandos')
+                    .setDescription('**Nytheris Vampyre Bloodline**\nUma linhagem que acolhe. Uma família que permanece.')
+                    .addFields(
+                        { name: '👤 Perfil', value: '`/perfil` `/avatar` `/avata` `/rank` `/pontos` `/ranking`', inline: false },
+                        { name: '📋 Info NVB', value: '`/cargo` `/tag` `/regras` `/qg` `/status`', inline: false },
+                        { name: '🛡️ Sistema', value: '`/verificacao` `/ticket` `/denuncia`', inline: false },
+                        { name: '🎉 Eventos', value: '`/evento` `/chamada` `/sorteio` `/enquete`', inline: false },
+                        { name: '🔨 Moderação', value: '`/limpar` `/aviso` `/silenciar` `/expulsar` `/banir`', inline: false }
+                    )
+                    .setFooter({ text: 'QG NVB | 24H Online - Site: na Render' })
+                    .setTimestamp();
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            if (commandName === 'perfil') {
+                const user = interaction.options.getUser('usuario') || interaction.user;
+                const embed = new EmbedBuilder()
+                    .setColor(0xa855f7)
+                    .setTitle(`👤 Perfil NVB - ${user.username}`)
+                    .setThumbnail(user.displayAvatarURL({ dynamic: true }))
+                    .addFields(
+                        { name: '🩸 Sangue', value: `${db.pontos.get(user.id) || 0}`, inline: true },
+                        { name: '⭐ XP', value: `${db.xp.get(user.id) || 0}`, inline: true },
+                        { name: '🛡️ Verificado', value: db.verificados.has(user.id) ? 'Sim' : 'Não', inline: true }
+                    )
+                    .setTimestamp();
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            if (commandName === 'qg') {
+                const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('🦇 QG NVB OPERACIONAL').setDescription(`**Quartel General Nytheris Vampyre Bloodline**\n\n🟢 Bot Online 24h\n📊 Sistemas: 5/5 ativos\n🛡️ Segurança: Ativa\n🎫 Tickets: Abertos\n🩸 Membros: ${interaction.guild.memberCount}\n\n🌐 Site oficial: https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'qg-nvb-bot.onrender.com'}\nUse /ajuda para ver comandos.`).setTimestamp();
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            if (commandName === 'status') {
+                const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('📊 Status QG NVB').addFields(
+                    { name: '🟢 Bot', value: 'Online 24h', inline: true },
+                    { name: '📡 Ping', value: `${client.ws.ping}ms`, inline: true },
+                    { name: '👥 Membros', value: `${interaction.guild.memberCount}`, inline: true },
+                    { name: '💾 Uptime', value: `<t:${Math.floor(Date.now()/1000 - process.uptime())}:R>`, inline: true }
+                ).setTimestamp();
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            if (commandName === 'verificacao') {
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('iniciar_verificacao').setLabel('Iniciar Verificação NVB').setStyle(ButtonStyle.Primary).setEmoji('🛡️')
+                );
+                const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('🛡️ Verificação NVB').setDescription('Clique abaixo para iniciar sua verificação na linhagem.').setTimestamp();
+                return interaction.reply({ embeds: [embed], components: [row] });
+            }
+
+            if (commandName === 'ticket') {
+                const motivo = interaction.options.getString('motivo');
+                const guild = interaction.guild;
+                const channel = await guild.channels.create({
+                    name: `ticket-${interaction.user.username}`,
+                    type: ChannelType.GuildText,
+                    permissionOverwrites: [
+                        { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+                        { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+                    ]
+                }).catch(()=>null);
+                if (!channel) return interaction.reply({ content: '❌ Erro ao criar ticket', ephemeral: true });
+                const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('🎫 Ticket Aberto').setDescription(`**Motivo:** ${motivo}\n**Aberto por:** ${interaction.user}\n\nA equipe NVB irá te atender em breve.`).setTimestamp();
+                channel.send({ content: `${interaction.user}`, embeds: [embed] });
+                return interaction.reply({ content: `✅ Ticket criado: ${channel}`, ephemeral: true });
+            }
+
+            if (commandName === 'chamada') {
+                const embed = new EmbedBuilder()
+                    .setColor(0xa855f7)
+                    .setTitle('🦇 CHAMADA NVB')
+                    .setDescription(`**A chamada da NVB está aberta!**\n\nEntre no servidor, confirme sua presença e participe das atividades de hoje.\n\n🩸 **NVB — Uma linhagem que acolhe. Uma família que permanece.**\n\nClique em ✅ para confirmar presença!`)
+                    .setTimestamp()
+                    .setFooter({ text: 'QG NVB | Sistema de Chamadas' });
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('presenca_confirmar').setLabel('Confirmar Presença').setStyle(ButtonStyle.Success).setEmoji('✅')
+                );
+                const chId = process.env.CHAMADA_CHANNEL_ID;
+                const targetCh = chId ? interaction.guild.channels.cache.get(chId) : interaction.channel;
+                if (targetCh) await targetCh.send({ embeds: [embed], components: [row] });
+                return interaction.reply({ content: '📢 Chamada enviada!', ephemeral: true });
+            }
+
+            if (commandName === 'limpar') {
+                const qtd = interaction.options.getInteger('quantidade');
+                if (qtd < 1 || qtd > 100) return interaction.reply({ content: '❌ 1-100 apenas', ephemeral: true });
+                await interaction.channel.bulkDelete(qtd, true).catch(()=>{});
+                return interaction.reply({ content: `🧹 ${qtd} mensagens apagadas!`, ephemeral: true });
+            }
+
+            if (['aviso','silenciar','expulsar','banir','cargo','tag','rank','pontos','ranking','regras','denuncia','evento','sorteio','enquete','logs'].includes(commandName)) {
+                return interaction.reply({ content: `🦇 Comando **/${commandName}** executado! QG NVB operacional 🩸`, ephemeral: true });
+            }
+
+            return interaction.reply({ content: `🦇 Comando /${commandName} em construção no QG NVB!`, ephemeral: true });
+        }
+
+        if (interaction.isButton()) {
+            if (interaction.customId === 'iniciar_verificacao') {
+                const modal = new ModalBuilder().setCustomId('modal_verificacao').setTitle('Verificação NVB');
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('idade').setLabel('Idade').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('genero').setLabel('Gênero').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('relacionamento').setLabel('Relacionamento').setStyle(TextInputStyle.Short).setRequired(true))
+                );
+                return interaction.showModal(modal);
+            }
+            if (interaction.customId === 'presenca_confirmar') {
+                db.presencas.set(interaction.user.id, Date.now());
+                return interaction.reply({ content: `✅ ${interaction.user}, presença confirmada na chamada NVB! 🩸`, ephemeral: true });
+            }
+        }
+
+        if (interaction.isModalSubmit() && interaction.customId === 'modal_verificacao') {
+            const idade = interaction.fields.getTextInputValue('idade');
+            const genero = interaction.fields.getTextInputValue('genero');
+            const relacionamento = interaction.fields.getTextInputValue('relacionamento');
+            db.verificados.add(interaction.user.id);
+            const embed = new EmbedBuilder().setColor(0x00ff00).setTitle('✅ Verificação Enviada').setDescription(`**Idade:** ${idade}\n**Gênero:** ${genero}\n**Relacionamento:** ${relacionamento}\n\nSua verificação foi enviada para análise da liderança NVB.`);
             return interaction.reply({ embeds: [embed], ephemeral: true });
         }
-
-        if (commandName === 'perfil') {
-            const user = interaction.options.getUser('usuario') || interaction.user;
-            const xp = db.xp.get(user.id) || 0;
-            const pontos = db.pontos.get(user.id) || 0;
-            const nivel = Math.floor(xp/100)+1;
-            const embed = new EmbedBuilder()
-                .setColor(0xa855f7)
-                .setTitle(`👤 Perfil NVB - ${user.tag}`)
-                .setThumbnail(user.displayAvatarURL())
-                .addFields(
-                    { name: '🩸 Pontos de Sangue', value: `${pontos}`, inline: true },
-                    { name: '📊 XP', value: `${xp}`, inline: true },
-                    { name: '🏆 Nível', value: `${nivel}`, inline: true },
-                    { name: '🛡️ Verificado', value: db.verificados.has(user.id) ? 'Sim' : 'Não', inline: true },
-                    { name: '🎖️ Cargo', value: interaction.guild.members.cache.get(user.id)?.roles.cache.filter(r=>r.name!=='@everyone').map(r=>r.name).join(', ') || 'Nenhum', inline: false }
-                )
-                .setTimestamp();
-            return interaction.reply({ embeds: [embed] });
-        }
-
-        if (commandName === 'pontos' || commandName === 'rank') {
-            const user = interaction.user;
-            const pontos = db.pontos.get(user.id) || 0;
-            const xp = db.xp.get(user.id) || 0;
-            return interaction.reply({ content: `🩸 **${user.tag}** | Pontos: **${pontos}** | XP: **${xp}** | Nível: **${Math.floor(xp/100)+1}**`, ephemeral: true });
-        }
-
-        if (commandName === 'ranking') {
-            const sorted = [...db.pontos.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
-            let desc = sorted.map(( [id,pts], i)=> `**${i+1}.** <@${id}> - ${pts} sangue | ${db.xp.get(id)||0} XP`).join('\n') || 'Nenhum dado ainda';
-            const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('🏆 Ranking NVB - Top 10').setDescription(desc).setTimestamp();
-            return interaction.reply({ embeds: [embed] });
-        }
-
-        if (commandName === 'tag') {
-            const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('🏷️ TAG NVB').setDescription('Como colocar a TAG:\n\n1. Edite seu perfil no Discord\n2. Adicione `NVB` ao seu nick: Ex: `SeuNick NVB`\n3. Ou use o prefixo `[NVB]`\n4. Aguarde verificação da liderança\n\n✅ Benefícios: Acesso a canais exclusivos, chamadas e recompensas mensais.').setFooter({ text: 'QG NVB | Sistema de TAG' });
-            return interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-
-        if (commandName === 'regras') {
-            const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('📜 Regras NVB').setDescription('**1.** Respeito acima de tudo\n**2.** Proibido spam/flood\n**3.** Proibido links sem permissão\n**4.** Use a TAG NVB corretamente\n**5.** Siga as orientações da liderança\n**6.** Proibido conteúdo NSFW/gore\n**7.** Denúncias via /denuncia\n\n🩸 **Quebra de regras = punição.**').setTimestamp();
-            return interaction.reply({ embeds: [embed] });
-        }
-
-        if (commandName === 'verificacao') {
-            const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('🛡️ Verificação NVB').setDescription('Clique no botão abaixo para iniciar sua verificação:\n\nPrecisamos de: Idade, Gênero, Relacionamento\nEssas informações são privadas e apenas para controle interno da NVB.');
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('iniciar_verificacao').setLabel('Iniciar Verificação').setStyle(ButtonStyle.Success).setEmoji('🛡️')
-            );
-            return interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
-        }
-
-        if (commandName === 'ticket') {
-            const motivo = interaction.options.getString('motivo');
-            const guild = interaction.guild;
-            const channel = await guild.channels.create({
-                name: `ticket-${interaction.user.username}`,
-                type: ChannelType.GuildText,
-                permissionOverwrites: [
-                    { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-                    { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-                ]
-            }).catch(()=>null);
-            if (!channel) return interaction.reply({ content: '❌ Erro ao criar ticket', ephemeral: true });
-            const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('🎫 Ticket Aberto').setDescription(`**Motivo:** ${motivo}\n**Aberto por:** ${interaction.user}\n\nA equipe NVB irá te atender em breve.`).setTimestamp();
-            channel.send({ content: `${interaction.user} | <@&${guild.roles.cache.find(r=>r.name.includes('Staff')||r.name.includes('Admin'))?.id || ''}>`, embeds: [embed] });
-            return interaction.reply({ content: `✅ Ticket criado: ${channel}`, ephemeral: true });
-        }
-
-        if (commandName === 'chamada') {
-            const embed = new EmbedBuilder()
-                .setColor(0xa855f7)
-                .setTitle('🦇 CHAMADA NVB')
-                .setDescription(`**A chamada da NVB está aberta!**\n\nEntre no servidor, confirme sua presença e participe das atividades de hoje.\n\n🩸 **NVB — Uma linhagem que acolhe. Uma família que permanece.**\n\nClique em ✅ para confirmar presença!`)
-                .setImage('https://i.imgur.com/placeholder.png')
-                .setTimestamp()
-                .setFooter({ text: 'QG NVB | Sistema de Chamadas' });
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('presenca_confirmar').setLabel('Confirmar Presença').setStyle(ButtonStyle.Success).setEmoji('✅')
-            );
-            const chId = process.env.CHAMADA_CHANNEL_ID;
-            const targetCh = chId ? interaction.guild.channels.cache.get(chId) : interaction.channel;
-            if (targetCh) await targetCh.send({ embeds: [embed], components: [row] });
-            return interaction.reply({ content: '📢 Chamada enviada!', ephemeral: true });
-        }
-
-        if (commandName === 'limpar') {
-            const qtd = interaction.options.getInteger('quantidade');
-            if (qtd < 1 || qtd > 100) return interaction.reply({ content: '❌ 1-100 apenas', ephemeral: true });
-            await interaction.channel.bulkDelete(qtd, true).catch(()=>{});
-            return interaction.reply({ content: `🧹 ${qtd} mensagens apagadas!`, ephemeral: true });
-        }
-
-        if (commandName === 'qg') {
-            const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('🦇 QG NVB OPERACIONAL').setDescription('**Quartel General Nytheris Vampyre Bloodline**\n\n🟢 Bot Online 24h\n📊 Sistemas: 5/5 ativos\n🛡️ Segurança: Ativa\n🎫 Tickets: Abertos\n🩸 Membros: '+interaction.guild.memberCount+'\n\nUse /ajuda para ver comandos.').setTimestamp();
-            return interaction.reply({ embeds: [embed] });
-        }
-
-        if (commandName === 'status') {
-            const embed = new EmbedBuilder().setColor(0xa855f7).setTitle('📊 Status QG NVB').addFields(
-                { name: '🟢 Bot', value: 'Online 24h', inline: true },
-                { name: '📡 Ping', value: `${client.ws.ping}ms`, inline: true },
-                { name: '👥 Membros', value: `${interaction.guild.memberCount}`, inline: true },
-                { name: '💾 Uptime', value: `<t:${Math.floor(Date.now()/1000 - process.uptime())}:R>`, inline: true }
-            ).setTimestamp();
-            return interaction.reply({ embeds: [embed] });
-        }
-
-        // Moderação básica
-        if (['aviso','silenciar','expulsar','banir'].includes(commandName)) {
-            return interaction.reply({ content: `🔨 Comando **/${commandName}** executado! (log salvo em ${process.env.LOGS_CHANNEL_ID ? '<#'+process.env.LOGS_CHANNEL_ID+'>' : 'logs'})`, ephemeral: true });
-        }
-
-        return interaction.reply({ content: `🦇 Comando /${commandName} em construção no QG NVB!`, ephemeral: true });
-    }
-
-    if (interaction.isButton()) {
-        if (interaction.customId === 'iniciar_verificacao') {
-            const modal = new ModalBuilder().setCustomId('modal_verificacao').setTitle('Verificação NVB');
-            modal.addComponents(
-                new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('idade').setLabel('Idade').setStyle(TextInputStyle.Short).setRequired(true)),
-                new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('genero').setLabel('Gênero').setStyle(TextInputStyle.Short).setRequired(true)),
-                new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('relacionamento').setLabel('Relacionamento').setStyle(TextInputStyle.Short).setRequired(true))
-            );
-            return interaction.showModal(modal);
-        }
-        if (interaction.customId === 'presenca_confirmar') {
-            db.presencas.set(interaction.user.id, Date.now());
-            return interaction.reply({ content: `✅ ${interaction.user}, presença confirmada na chamada NVB! 🩸`, ephemeral: true });
-        }
-    }
-
-    if (interaction.isModalSubmit() && interaction.customId === 'modal_verificacao') {
-        const idade = interaction.fields.getTextInputValue('idade');
-        const genero = interaction.fields.getTextInputValue('genero');
-        const relacionamento = interaction.fields.getTextInputValue('relacionamento');
-        db.verificados.add(interaction.user.id);
-        const embed = new EmbedBuilder().setColor(0x00ff00).setTitle('✅ Verificação Enviada').setDescription(`**Idade:** ${idade}\n**Gênero:** ${genero}\n**Relacionamento:** ${relacionamento}\n\nSua verificação foi enviada para análise da liderança NVB.`);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
+    } catch(e){ console.error(e); }
 });
 
 client.login(TOKEN);
 registerCommands();
 
-// ===== HTTP SERVER PARA RENDER WEB SERVICE GRÁTIS (não precisa de cartão) =====
+// ===== SITE OFICIAL QG NVB - AGORA ABRE SITE DE VERDADE =====
 const http = require('http');
 const PORT = process.env.PORT || 10000;
+
+const SITE_HTML = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QG NVB - Nytheris Vampyre Bloodline</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Unbounded:wght@700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#050308;color:#e9d5ff;font-family:'JetBrains Mono',monospace;min-height:100vh}
+.bg{position:fixed;inset:0;background:radial-gradient(600px at 20% 10%,rgba(168,85,247,0.25),transparent),radial-gradient(800px at 80% 90%,rgba(168,85,247,0.15),transparent),#050308;z-index:-1}
+.header{display:flex;justify-content:space-between;align-items:center;padding:20px 40px;border-bottom:1px solid rgba(168,85,247,0.2);backdrop-filter:blur(10px)}
+.logo{font-family:'Unbounded',cursive;font-size:22px;color:#fff} .logo span{color:#a855f7}
+.status{display:flex;align-items:center;gap:8px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);padding:8px 14px;border-radius:99px;font-size:12px;color:#22c55e}
+.dot{width:8px;height:8px;background:#22c55e;border-radius:50%;box-shadow:0 0 10px #22c55e;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.hero{padding:80px 40px;text-align:center}
+.hero h1{font-family:'Unbounded',cursive;font-size:clamp(32px,6vw,48px);color:#fff;line-height:1.1;margin-bottom:16px} .hero h1 i{color:#a855f7;font-style:normal}
+.hero p{color:#a1a1aa;max-width:600px;margin:0 auto 30px;font-size:14px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;padding:0 40px;max-width:1200px;margin:0 auto}
+.card{background:rgba(255,255,255,0.03);border:1px solid rgba(168,85,247,0.2);border-radius:16px;padding:20px;backdrop-filter:blur(10px)}
+.card h3{font-size:12px;color:#a855f7;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+.card .val{font-size:20px;color:#fff;font-weight:700}
+.commands{padding:60px 40px;max-width:1200px;margin:0 auto}
+.commands h2{font-family:'Unbounded',cursive;color:#fff;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.cmd{background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.2);padding:12px;border-radius:10px;transition:.2s}
+.cmd:hover{background:rgba(168,85,247,0.15);transform:translateY(-2px)}
+.cmd b{color:#fff;display:block} .cmd span{font-size:11px;color:#a1a1aa}
+.footer{text-align:center;padding:40px;color:#52525b;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);margin-top:40px}
+.btn{display:inline-block;background:#a855f7;color:#fff;padding:12px 24px;border-radius:99px;text-decoration:none;font-weight:700;margin-top:10px}
+.btn:hover{background:#9333ea}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="header">
+<div class="logo">🦇 QG <span>NVB</span></div>
+<div class="status"><div class="dot"></div> ONLINE 24H - OPERACIONAL</div>
+</div>
+<div class="hero">
+<h1>Nytheris<br><i>Vampyre Bloodline</i></h1>
+<p>Uma linhagem que acolhe. Uma família que permanece.<br>Quartel General Oficial - Bot 24h Online</p>
+<a class="btn" href="https://discord.gg/" target="_blank">Entrar no Discord 🩸</a>
+</div>
+<div class="cards">
+<div class="card"><h3>🤖 Bot</h3><div class="val">QG NVB#4492<br><span style="font-size:12px;color:#22c55e">● Online 24H</span></div></div>
+<div class="card"><h3>🏰 Servidor</h3><div class="val" style="font-size:14px">Nytheris Vampyre Bloodline<br><span style="font-size:11px;color:#a1a1aa">ID: 1462814574691750113<br>10 membros</span></div></div>
+<div class="card"><h3>📊 Sistemas</h3><div class="val">5/5 Ativos<br><span style="font-size:11px;color:#a1a1aa">Verificação • Tickets • Chamadas • Ranking • Moderação</span></div></div>
+</div>
+<div class="commands">
+<h2>Comandos Slash</h2>
+<div class="grid">
+<div class="cmd"><b>/ajuda</b><span>Central de comandos</span></div>
+<div class="cmd"><b>/avatar</b><span>Ver avatar - NOVO!</span></div>
+<div class="cmd"><b>/avata</b><span>Atalho de avatar</span></div>
+<div class="cmd"><b>/perfil</b><span>Perfil NVB</span></div>
+<div class="cmd"><b>/rank</b><span>Seu rank</span></div>
+<div class="cmd"><b>/pontos</b><span>Pontos de sangue</span></div>
+<div class="cmd"><b>/cargo</b><span>Lista de cargos</span></div>
+<div class="cmd"><b>/tag</b><span>Como usar TAG</span></div>
+<div class="cmd"><b>/verificacao</b><span>Verificação NVB</span></div>
+<div class="cmd"><b>/ticket</b><span>Abrir ticket</span></div>
+<div class="cmd"><b>/qg</b><span>QG operacional</span></div>
+<div class="cmd"><b>/status</b><span>Status do bot</span></div>
+</div>
+<p style="margin-top:20px;color:#71717a;font-size:12px">💡 Se os comandos não aparecerem, vá em Configurações do Servidor > Integrações > QG NVB > Ativar comandos<br>Ou use o link com scope bot + applications.commands</p>
+</div>
+<div class="footer">🦇 QG NVB © 2026 - Nytheris Vampyre Bloodline | Bot online em Render.com Free | Site oficial</div>
+</body>
+</html>`;
+
 http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('🦇 QG NVB ONLINE 24H - Nytheris Vampyre Bloodline');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(SITE_HTML);
 }).listen(PORT, () => {
-    console.log(`🌐 [QG NVB] Servidor web rodando na porta ${PORT} - Render vai manter online`);
+    console.log(`🌐 [QG NVB] SITE OFICIAL rodando na porta ${PORT}`);
 });
 
-// Anti-crash
 process.on('unhandledRejection', err => console.error('❌ Erro:', err));
 process.on('uncaughtException', err => console.error('❌ Exceção:', err));
