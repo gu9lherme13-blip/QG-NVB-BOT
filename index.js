@@ -1,7 +1,307 @@
-require('dotenv').config();
+require('dotenv').config();require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, SlashCommandBuilder, Routes, REST, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 const http = require('http');
 
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID || "1462814574691750113";
+const RECRUT_CHANNEL_ID = process.env.RECRUT_CHANNEL_ID || "";
+const TICKET_CHANNEL_ID = process.env.TICKET_CHANNEL_ID || "";
+const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID || "";
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID || "";
+const CHAMADA_CHANNEL_ID = process.env.CHAMADA_CHANNEL_ID || "";
+const PORT = process.env.PORT || 10000;
+
+if (!TOKEN || !CLIENT_ID) {
+    console.error("âŒ [QG NVB] Configure .env com DISCORD_TOKEN e CLIENT_ID");
+    process.exit(1);
+}
+
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.GuildPresences
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.GuildMember]
+});
+
+// ===== BANCO DE DADOS EM MEMÃ“RIA =====
+const db = {
+    xp: new Map(),
+    pontos: new Map(), // pontos totais (moeda)
+    roblox: new Map(), // discordId -> { username, id, avatarUrl, estilo, cargo, entrada, sequencia, conquistas }
+    verificados: new Set(),
+    presencas: new Map(),
+    tickets: new Map(),
+    warns: new Map(),
+    dailyChat: new Map(), // userId -> { date, count, lastMsg }
+    recrutamentos: [],
+    posts: [
+        { id: 1, user: '_kitsume_26232', avatar: 'ðŸ¦‡', text: 'Boa noite minha famÃ­lia NVB linda! Hoje tivemos nossa resenha vampÃ­rica e foi PERFEITO! CadÃª as vampirinhas pra marcar presenÃ§a? ðŸ¦‡ðŸ–¤', likes: 12, comments: 3 },
+        { id: 2, user: 'luna_nvb', avatar: 'ðŸ’œ', text: 'Gente, consegui meu avatar no estilo VampÃ­rico NVB! Ficou INSANO! Quem quer que eu ensine? ðŸ©¸âœ¨', likes: 28, comments: 7 }
+    ],
+    sorteios: new Map()
+};
+
+// ===== TABELA DE PONTOS OFICIAL =====
+const TABELA_PONTOS = {
+    entrar_servidor: 10,
+    verificacao: 10,
+    tag_nvb: 10,
+    perfil_roblox: 15,
+    criar_avatar: 10,
+    chat: 2,
+    jogatina: 5,
+    resenha: 5,
+    evento: 10,
+    chamada: 5,
+    missao_qg: 10,
+    ganhar_evento: 20,
+    ajudar_membro: 5,
+    sugestao_aprovada: 10,
+    print_clipe: 3,
+    conteudo_nvb: 15,
+    atividade_roblox: 5,
+    roupa_oficial: 5,
+    divulgar_evento: 5,
+    recrutar_membro: 20,
+    destaque_mes: 50
+};
+
+function addPontos(userId, qtd, motivo = "") {
+    const atual = db.pontos.get(userId) || 0;
+    db.pontos.set(userId, atual + qtd);
+    db.xp.set(userId, (db.xp.get(userId) || 0) + qtd);
+    console.log(`ðŸ’° +${qtd} pontos para ${userId} - ${motivo} | Total: ${atual+qtd}`);
+    return atual + qtd;
+}
+
+function getNivel(xp) {
+    if (xp < 50) return 1;
+    if (xp < 150) return 2;
+    if (xp < 300) return 3;
+    if (xp < 500) return 4;
+    if (xp < 800) return 5;
+    if (xp < 1200) return 6;
+    if (xp < 1700) return 7;
+    if (xp < 2300) return 8;
+    if (xp < 3000) return 9;
+    return Math.floor(xp / 300) + 5;
+}
+
+function getCargoNVB(nivel) {
+    if (nivel <= 2) return { nome: "NVT", tag: "[NVT]", cor: 0x71717a };
+    if (nivel <= 5) return { nome: "MBRS", tag: "[MBRS]", cor: 0xa855f7 };
+    if (nivel <= 9) return { nome: "VTRN", tag: "[VTRN]", cor: 0xec4899 };
+    if (nivel <= 14) return { nome: "VET+", tag: "[VET+]", cor: 0xf59e0b };
+    if (nivel <= 19) return { nome: "CNSL", tag: "[CNSL]", cor: 0x22c55e };
+    return { nome: "LDR", tag: "[LDR]", cor: 0xef4444 };
+}
+
+// ===== ROBLOX API HELPERS =====
+async function getRobloxData(username) {
+    try {
+        const res = await fetch('https://users.roblox.com/v1/usernames/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ usernames: [username], excludeBannedUsers: true })
+        });
+        const data = await res.json();
+        if (!data.data || data.data.length === 0) return null;
+        const user = data.data[0];
+        // avatar
+        const thumbRes = await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${user.id}&size=720x720&format=Png&isCircular=false`);
+        const thumbData = await thumbRes.json();
+        const avatarUrl = thumbData.data?.[0]?.imageUrl || null;
+        return { id: user.id, username: user.name, displayName: user.displayName, avatarUrl };
+    } catch (e) {
+        console.error('Erro Roblox API:', e.message);
+        return null;
+    }
+}
+
+const ESTILOS_AVATAR = {
+    anime: { nome: "ðŸŽŒ Anime", custo: 25, desc: "transformar o avatar em arte estilo anime", prompt: "anime art style" },
+    cinematografico: { nome: "ðŸŽ¬ CinematogrÃ¡fico", custo: 50, desc: "iluminaÃ§Ã£o dramÃ¡tica, fundo detalhado e aparÃªncia de pÃ´ster", prompt: "cinematic lighting" },
+    vampirico_nvb: { nome: "ðŸ©¸ VampÃ­rico NVB", custo: 25, desc: "estÃ©tica da linhagem, morcegos, castelo e tons roxo/azul/verde", prompt: "vampiric aesthetic purple castle bats" },
+    dark: { nome: "ðŸ–¤ Dark", custo: 10, desc: "visual sombrio", prompt: "dark aesthetic" },
+    action: { nome: "âš¡ Action", custo: 10, desc: "pose dinÃ¢mica", prompt: "dynamic action pose" },
+    premium: { nome: "ðŸ‘‘ Premium", custo: 50, desc: "aparÃªncia de banner/perfil", prompt: "premium banner profile" },
+    original: { nome: "ðŸŽ® Original Roblox", custo: 0, desc: "manter o avatar praticamente igual", prompt: "original roblox" },
+    fantasia: { nome: "ðŸŒŒ Fantasia", custo: 25, desc: "cenÃ¡rio mÃ¡gico e atmosfera sobrenatural", prompt: "fantasy magical" },
+    elemental: { nome: "ðŸ”¥ Elemental", custo: 25, desc: "fogo, gelo, eletricidade, vento", prompt: "elemental fire ice lightning" },
+    noir: { nome: "ðŸŒ‘ Noir", custo: 10, desc: "preto e branco, sombras fortes", prompt: "noir black white strong shadows" },
+    neon: { nome: "ðŸ’œ Neon", custo: 25, desc: "luzes neon e estÃ©tica futurista", prompt: "neon lights futuristic" },
+    cyberpunk: { nome: "ðŸ§¬ Cyberpunk", custo: 50, desc: "cidade futurista, hologramas e tecnologia", prompt: "cyberpunk city holograms" },
+    anjo: { nome: "ðŸª½ Anjo", custo: 25, desc: "asas, luz celestial e atmosfera elegante", prompt: "angel wings celestial light" },
+    demoniaco: { nome: "ðŸ˜ˆ DemonÃ­aco", custo: 25, desc: "aura sombria, chifres e energia sobrenatural", prompt: "demonic aura horns" },
+    gotico: { nome: "ðŸ¥€ GÃ³tico", custo: 25, desc: "castelo, rosas, sombras e estÃ©tica gÃ³tica", prompt: "gothic castle roses shadows" },
+    vampiro_classico: { nome: "ðŸ§› Vampiro ClÃ¡ssico", custo: 25, desc: "visual tradicional de vampiro", prompt: "classic vampire" },
+    cidade_noturna: { nome: "ðŸŒƒ Cidade Noturna", custo: 25, desc: "cidade iluminada, chuva e luzes urbanas", prompt: "night city rain urban lights" },
+    chuva: { nome: "ðŸŒ§ï¸ Chuva", custo: 10, desc: "cenÃ¡rio chuvoso e atmosfera dramÃ¡tica", prompt: "rainy dramatic atmosphere" },
+    gelo: { nome: "â„ï¸ Gelo", custo: 10, desc: "neve, cristais e efeitos congelantes", prompt: "ice snow crystals frozen" },
+    infernal: { nome: "ðŸŒ‹ Infernal", custo: 25, desc: "lava, fumaÃ§a e ambiente intenso", prompt: "infernal lava smoke intense" },
+    floresta_sombria: { nome: "ðŸŒ² Floresta Sombria", custo: 25, desc: "floresta noturna, neblina e lua", prompt: "dark forest night fog moon" },
+    lua_cheia: { nome: "ðŸŒ• Lua Cheia", custo: 10, desc: "lua gigante, nÃ©voa e iluminaÃ§Ã£o lunar", prompt: "full moon giant fog lunar light" },
+    noite_vampirica: { nome: "ðŸ¦‡ Noite VampÃ­rica", custo: 25, desc: "cÃ©u noturno, morcegos e lua cheia", prompt: "vampiric night sky bats full moon" },
+    streetwear: { nome: "ðŸ•¶ï¸ Streetwear", custo: 10, desc: "estÃ©tica urbana e moderna", prompt: "streetwear urban modern" },
+    music: { nome: "ðŸŽ§ Music", custo: 25, desc: "visual inspirado em capa de Ã¡lbum", prompt: "music album cover aesthetic" },
+    photoshoot: { nome: "ðŸ“¸ Photoshoot", custo: 25, desc: "ensaio fotogrÃ¡fico profissional", prompt: "professional photoshoot" },
+    poster: { nome: "ðŸŽžï¸ Poster", custo: 50, desc: "composiÃ§Ã£o de pÃ´ster de filme/anime", prompt: "movie anime poster composition" },
+    fantasy_glow: { nome: "âœ¨ Fantasy Glow", custo: 25, desc: "brilho mÃ¡gico e partÃ­culas", prompt: "fantasy glow magical particles" },
+    luxury: { nome: "ðŸ’Ž Luxury", custo: 50, desc: "aparÃªncia sofisticada, dourada e elegante", prompt: "luxury sophisticated golden elegant" },
+    cosmic: { nome: "ðŸª Cosmic", custo: 50, desc: "espaÃ§o, estrelas e energia cÃ³smica", prompt: "cosmic space stars energy" },
+    horror: { nome: "ðŸ‘» Horror", custo: 25, desc: "terror, nÃ©voa e atmosfera assustadora", prompt: "horror terror fog scary" },
+    glitch: { nome: "ðŸŒ€ Glitch", custo: 25, desc: "distorÃ§Ãµes digitais e efeitos de glitch", prompt: "glitch digital distortion" },
+    warrior: { nome: "ðŸ—¡ï¸ Warrior", custo: 25, desc: "guerreiro em cenÃ¡rio Ã©pico", prompt: "warrior epic scenario" },
+    champion: { nome: "ðŸ† Champion", custo: 50, desc: "pose de campeÃ£o com iluminaÃ§Ã£o de vitÃ³ria", prompt: "champion victory lighting pose" },
+    mystery: { nome: "ðŸŽ­ Mystery", custo: 10, desc: "personagem parcialmente oculto por sombras", prompt: "mystery hidden shadows" },
+    sunset: { nome: "ðŸŒ… Sunset", custo: 10, desc: "pÃ´r do sol e iluminaÃ§Ã£o quente", prompt: "sunset warm lighting" },
+    galaxy: { nome: "ðŸŒŒ Galaxy", custo: 50, desc: "nebulosas, estrelas e fundo espacial", prompt: "galaxy nebula stars space background" },
+    mystic: { nome: "ðŸ§¿ Mystic", custo: 25, desc: "sÃ­mbolos, energia e atmosfera sobrenatural", prompt: "mystic symbols energy supernatural" }
+};
+
+// ===== COMANDOS (LIMPOS - SEM OS 8 REMOVIDOS) =====
+const commands = [
+    new SlashCommandBuilder().setName('ajuda').setDescription('ðŸ¦‡ Central de comandos QG NVB'),
+    new SlashCommandBuilder().setName('perfil').setDescription('ðŸ‘¤ Ver seu Passaporte NVB').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(false)),
+    new SlashCommandBuilder().setName('avatar').setDescription('ðŸ–¼ï¸ Ver avatar Discord').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(false)),
+    new SlashCommandBuilder().setName('rank').setDescription('ðŸ† Ver seu rank e nÃ­vel NVB').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(false)),
+    new SlashCommandBuilder().setName('pontos').setDescription('ðŸ’° Ver pontos e tabela oficial').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(false)),
+    new SlashCommandBuilder().setName('ranking').setDescription('ðŸ† Top 10 ranking NVB'),
+    new SlashCommandBuilder().setName('ticket').setDescription('ðŸŽ« Criar ticket com texto livre').addStringOption(o=>o.setName('titulo').setDescription('TÃ­tulo do ticket').setRequired(true)).addStringOption(o=>o.setName('descricao').setDescription('Descreva o que precisa (pode escrever o que quiser)').setRequired(true)),
+    new SlashCommandBuilder().setName('chamada').setDescription('ðŸ“¢ Iniciar chamada NVB').setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
+    new SlashCommandBuilder().setName('sorteio').setDescription('ðŸŽ Criar sorteio').addStringOption(o=>o.setName('premio').setDescription('PrÃªmio').setRequired(true)).addIntegerOption(o=>o.setName('ganhadores').setDescription('Qtd ganhadores').setRequired(false)),
+    new SlashCommandBuilder().setName('limpar').setDescription('ðŸ§¹ Limpar mensagens').addIntegerOption(o=>o.setName('quantidade').setDescription('1-100').setRequired(true)).setDefaultMemberPermissions(PermissionsBitField.Flags.ManageMessages),
+    new SlashCommandBuilder().setName('aviso').setDescription('âš ï¸ Dar aviso').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(true)).addStringOption(o=>o.setName('motivo').setDescription('Motivo').setRequired(true)).setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
+    new SlashCommandBuilder().setName('silenciar').setDescription('ðŸ”‡ Silenciar').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(true)).addIntegerOption(o=>o.setName('minutos').setDescription('Minutos').setRequired(true)).setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers),
+    new SlashCommandBuilder().setName('expulsar').setDescription('ðŸ‘¢ Expulsar').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(true)).setDefaultMemberPermissions(PermissionsBitField.Flags.KickMembers),
+    new SlashCommandBuilder().setName('banir').setDescription('ðŸ”¨ Banir').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(true)).addStringOption(o=>o.setName('motivo').setDescription('Motivo').setRequired(false)).setDefaultMemberPermissions(PermissionsBitField.Flags.BanMembers),
+    new SlashCommandBuilder().setName('qg').setDescription('ðŸ¦‡ Acessar QG NVB'),
+    new SlashCommandBuilder().setName('status').setDescription('ðŸ“Š Status completo bot + servidor'),
+    // NOVOS COMANDOS ROBLOX + GERENCIAMENTO
+    new SlashCommandBuilder().setName('registrar').setDescription('ðŸŽ® Registrar seu nick Roblox').addStringOption(o=>o.setName('nick').setDescription('Seu nick do Roblox').setRequired(true)),
+    new SlashCommandBuilder().setName('verificar').setDescription('âœ… Verificar e vincular Roblox').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio (lideranÃ§a)').setRequired(false)),
+    new SlashCommandBuilder().setName('perfil-roblox').setDescription('ðŸ‘¤ Ver perfil Roblox NVB').addUserOption(o=>o.setName('usuario').setDescription('UsuÃ¡rio').setRequired(false)),
+    new SlashCommandBuilder().setName('avatar-roblox').setDescription('ðŸ–¼ï¸ Editor de avatar Roblox com 40 estilos').addStringOption(o=>o.setName('nick').setDescription('Nick Roblox (ou deixe vazio para usar o seu vinculado)').setRequired(false)).addStringOption(o=>o.setName('estilo').setDescription('Estilo do avatar').setRequired(false).addChoices(
+        { name: 'ðŸŽ® Original (GrÃ¡tis)', value: 'original' },
+        { name: 'ðŸ–¤ Dark (10 pts)', value: 'dark' },
+        { name: 'ðŸ©¸ VampÃ­rico NVB (25 pts)', value: 'vampirico_nvb' },
+        { name: 'ðŸŽŒ Anime (25 pts)', value: 'anime' },
+        { name: 'ðŸŽ¬ CinematogrÃ¡fico (50 pts)', value: 'cinematografico' },
+        { name: 'ðŸ’œ Neon (25 pts)', value: 'neon' },
+        { name: 'ðŸ§¬ Cyberpunk (50 pts)', value: 'cyberpunk' },
+        { name: 'ðŸ¥€ GÃ³tico (25 pts)', value: 'gotico' },
+        { name: 'ðŸ¦‡ Noite VampÃ­rica (25 pts)', value: 'noite_vampirica' }
+    )),
+    new SlashCommandBuilder().setName('nvb').setDescription('ðŸ¦‡ Central do QG - Painel Ãºnico NVB'),
+    new SlashCommandBuilder().setName('setup-qg').setDescription('ðŸ° Criar estrutura completa de canais NVB').setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+    new SlashCommandBuilder().setName('canal').setDescription('ðŸ”§ Gerenciar canais do clÃ£').addStringOption(o=>o.setName('acao').setDescription('AÃ§Ã£o').setRequired(true).addChoices(
+        { name: 'Criar', value: 'criar' },
+        { name: 'Deletar', value: 'deletar' },
+        { name: 'Trancar', value: 'trancar' },
+        { name: 'Destrancar', value: 'destrancar' },
+        { name: 'Info', value: 'info' }
+    )).addStringOption(o=>o.setName('nome').setDescription('Nome do canal').setRequired(false)).addChannelOption(o=>o.setName('canal_alvo').setDescription('Canal alvo').setRequired(false)).setDefaultMemberPermissions(PermissionsBitField.Flags.ManageChannels)
+].map(c=>c.toJSON());
+
+async function registerCommands() {
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+    try {
+        console.log('ðŸ”„ Limpando comandos globais duplicados...');
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
+        console.log('ðŸ§¹ Globais limpos');
+        if (GUILD_ID) {
+            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+            console.log(`âœ… ${commands.length} comandos registrados no servidor ${GUILD_ID} | SEM DUPLICAÃ‡ÃƒO`);
+        }
+    } catch (e) {
+        console.error('âŒ Erro registrar comandos:', e);
+    }
+}
+
+// ===== EVENTOS =====
+function onBotReady() {
+    console.log(`\nðŸ¦‡ QG NVB - BOT ONLINE | ${client.user.tag}`);
+    console.log(`ðŸ©¸ Sistema UNIFICADO: QG + Bot + Roblox + Pontos + Avatar IA`);
+    console.log(`ðŸ“¡ Servidores: ${client.guilds.cache.size}`);
+    client.guilds.cache.forEach(g => console.log(`ðŸ° ${g.name} | ID: ${g.id} | Membros: ${g.memberCount}`));
+    console.log(`ðŸ‘‘ OPERACIONAL 24H\n`);
+    try{ client.user.setActivity('QG NVB | Passaporte + Roblox ðŸ¦‡', { type: 3 }); }catch(_){}
+}
+client.once('clientReady', onBotReady);
+client.once('ready', onBotReady);
+
+client.on('guildMemberAdd', async member => {
+    try {
+        // Cargo auto
+        const nvtRole = member.guild.roles.cache.find(r => r.name.toLowerCase().includes('nvt') || r.name.toLowerCase().includes('novat'));
+        if (nvtRole) await member.roles.add(nvtRole).catch(()=>{});
+        
+        // Pontos entrar
+        addPontos(member.id, TABELA_PONTOS.entrar_servidor, 'Entrou no servidor');
+        
+        // Salva data entrada
+        if (!db.roblox.has(member.id)) db.roblox.set(member.id, {});
+        const dados = db.roblox.get(member.id);
+        dados.entrada = new Date().toLocaleDateString('pt-BR');
+        dados.sequencia = 1;
+        dados.conquistas = 0;
+        db.roblox.set(member.id, dados);
+        
+        // Mensagem boas-vindas
+        let welcomeCh = null;
+        if (WELCOME_CHANNEL_ID) welcomeCh = await client.channels.fetch(WELCOME_CHANNEL_ID).catch(()=>null);
+        if (!welcomeCh) welcomeCh = member.guild.channels.cache.find(c => c.name.includes('boas-vindas') || c.name.includes('welcome'));
+        if (welcomeCh && welcomeCh.send) {
+            const embed = new EmbedBuilder()
+                .setColor(0xa855f7)
+                .setTitle('ðŸ¦‡ Bem-vinda Ã  FamÃ­lia NVB!')
+                .setDescription(`OlÃ¡ ${member}! Uma linhagem que acolhe. Uma famÃ­lia que permanece.\n\nðŸ‘‰ Use **/registrar SeuNickRoblox** para vincular seu Roblox\nðŸ‘‰ Use **/perfil** para ver seu Passaporte NVB\nðŸ’° VocÃª ganhou **+10 pontos** por entrar!`)
+                .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+                .setTimestamp();
+            welcomeCh.send({ content: `${member}`, embeds: [embed] }).catch(()=>{});
+        }
+    } catch(e){ console.error('Erro welcome:', e.message); }
+});
+
+client.on('messageCreate', async msg => {
+    if (msg.author.bot) return;
+    // Anti-spam e pontos por chat
+    const userId = msg.author.id;
+    const agora = Date.now();
+    const hoje = new Date().toDateString();
+    let daily = db.dailyChat.get(userId);
+    if (!daily || daily.date !== hoje) daily = { date: hoje, count: 0, lastMsg: "", lastTime: 0 };
+    
+    // Mensagem repetida nÃ£o conta
+    if (daily.lastMsg === msg.content) return;
+    // Limite diÃ¡rio 25 mensagens (50 pontos max por dia conversando)
+    if (daily.count >= 25) return;
+    // Anti-spam 5 seg
+    if (agora - daily.lastTime < 5000) return;
+    
+    daily.count++;
+    daily.lastMsg = msg.content;
+    daily.lastTime = agora;
+    db.dailyChat.set(userId, daily);
+    addPontos(userId, TABELA_PONTOS.chat, 'Conversou no chat');
+});
+
+// ===== INTERAÃ‡Ã•ES =====
+client.on('interactionCreate', async interaction => {
+    try {
+        if (interaction.isChatInputCommand()) {
+            const cmd = interaction.commandName;
+
+            if (cmd === 'avatar') {
+                const user = interaction.options.getUser('usuario') 
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, SlashCommandBuilder, Routes, REST, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
+const http = require('http');
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID || "1462814574691750113";
