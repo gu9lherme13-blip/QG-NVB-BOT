@@ -103,7 +103,7 @@ client.once("ready",async()=>{
  console.log(`NVB BOT online: ${client.user.tag}`);
  if(!CLIENT_ID)return;
  const rest=new REST({version:"10"}).setToken(TOKEN);
- try{await rest.put(GUILD_ID?Routes.applicationGuildCommands(CLIENT_ID,GUILD_ID):Routes.applicationCommands(CLIENT_ID),{body:commands.map(c=>c.toJSON())});console.log(`{commands.length} comandos NVB registrados.`);}
+ try{await rest.put(GUILD_ID?Routes.applicationGuildCommands(CLIENT_ID,GUILD_ID):Routes.applicationCommands(CLIENT_ID),{body:commands.map(c=>c.toJSON())});console.log(`${commands.length} comandos NVB registrados.`);}
  catch(e){console.error("Erro ao registrar comandos:",e);}
 });
 
@@ -125,9 +125,11 @@ client.on("interactionCreate",async i=>{
 
 const app=express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname,"site")));
+
+// O index.html do projeto está na raiz, junto do index.js.
+app.use(express.static(__dirname));
 app.get("/api/status",(req,res)=>res.json({ok:true,bot:client.user?.tag||"NVB BOT",commands:commands.length}));
-app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"site","index.html")));
+app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
+
 app.listen(PORT,()=>console.log(`QG NVB na porta ${PORT}`));
 client.login(TOKEN);
-    
