@@ -1,0 +1,19 @@
+{
+  "name": "qg-nvb-bot",
+  "version": "3.0.0",
+  "description": "QG NVB - Nytheris Vampyre Bloodline - Bot Discord + QG",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "sharp": "^0.33.5"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
